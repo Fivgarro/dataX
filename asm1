@@ -1,0 +1,10 @@
+import pandas as pd
+
+df = pd.read_csv(r'')
+
+https://pythongeeks.org/data-cleansing-using-python/
+
+nomi = df['nominal_value']
+nume = df['numerical_value']
+ordi = df['ordinal_value']
+
