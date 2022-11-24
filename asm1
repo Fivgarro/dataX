@@ -1,10 +1,23 @@
 import pandas as pd
+from matplotlib import pyplot as plt
+
 
 df = pd.read_csv(r'')
 
 https://pythongeeks.org/data-cleansing-using-python/
 
-nomi = df['nominal_value']
-nume = df['numerical_value']
-ordi = df['ordinal_value']
+nomi = df['job']
+nume = df['age']
+ordi = df['education']
 
+## 2.1
+plt.bar(df['job'])
+plt.show()
+
+plt.bar(df['education'])
+plt.show()
+
+plt.scatter(df['age'])
+plt.show()
+
+## 2.2
