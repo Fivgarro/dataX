@@ -2,63 +2,111 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from scipy.stats import norm
+from datetime import datetime
 
-def get_stock_data(tickers, start_date, end_date):
-    data = yf.download(tickers, start=start_date, end=end_date)
-    return data['Adj Close']
+# Function to determine the financial quarter based on the date
+def get_financial_quarter(date):
+    month = date.month
+    if month in [7, 8, 9]:
+        return "Q1: 1 July to 30 September"
+    elif month in [10, 11, 12]:
+        return "Q2: 1 October to 31 December"
+    elif month in [1, 2, 3]:
+        return "Q3: 1 January to 31 March"
+    elif month in [4, 5, 6]:
+        return "Q4: 1 April to 30 June"
 
-def calculate_var(stock_returns, confidence_level=0.95):
-    mean = np.mean(stock_returns)
-    std_dev = np.std(stock_returns)
+# User Inputs for Reporting
+st.title("ARS 116 - Internal Model Approach")
+st.write("")
+st.sidebar.header("Reporting Inputs")
+
+# Date input for reporting period
+reporting_date = st.sidebar.date_input("Select Reporting Date", datetime.today())
+financial_quarter = get_financial_quarter(reporting_date)
+
+# reporting_consolidation = st.sidebar.selectbox("Reporting Consolidation", ["Level 1", "Level 2"])
+
+# Function to calculate daily VaR and stressed VaR
+def calculate_var(returns, confidence_level=0.99):
+    mean = returns.mean()
+    std_dev = returns.std()
     var = norm.ppf(1 - confidence_level, mean, std_dev)
     return var
 
-def calculate_es(stock_returns, confidence_level=0.95):
-    var = calculate_var(stock_returns, confidence_level)
-    es = stock_returns[stock_returns <= var].mean()
-    return es
+def calculate_stressed_var(returns, stress_factor=1.5, confidence_level=0.99):
+    stressed_returns = returns * stress_factor
+    stressed_var = calculate_var(stressed_returns, confidence_level)
+    return stressed_var
 
-def stress_test(stock_data, shock_factor=0.2):
-    stressed_data = stock_data * (1 - shock_factor)
-    return stressed_data
+def backtest_var(returns, var_series):
+    exceptions = returns[returns < -var_series]
+    return len(exceptions)
 
-def backtest_var(stock_returns, var):
-    breaches = stock_returns[stock_returns < var]
-    breach_percentage = len(breaches) / len(stock_returns)
-    return breach_percentage
-
-st.title("Market Risk Dashboard")
-st.sidebar.header("User Inputs")
-
-start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2020-01-01"))
-end_date = st.sidebar.date_input("End Date", pd.to_datetime("2023-12-31"))
-
+# Example stock data import and processing
 tickers = ["AAPL", "MSFT", "GOOGL"]
 selected_stocks = st.sidebar.multiselect("Select Stocks", tickers, default=tickers)
+data = yf.download(selected_stocks, start="2022-07-01", end="2023-06-30")['Adj Close']
 
-if st.sidebar.button("Load Data"):
-    stock_data = get_stock_data(selected_stocks, start_date, end_date)
-    st.write(stock_data)
+# Calculate returns
+returns = data.pct_change().dropna()
 
-    returns = stock_data.pct_change().dropna()
-    st.write("Stock Returns:", returns)
+# Column 1: End of quarter VaR
+end_of_quarter_var = abs(calculate_var(returns.iloc[-1])* 1e8)
 
-    var_values = returns.apply(calculate_var)
-    st.write("VaR Values (95% Confidence Level):", var_values)
+# Column 2: Average VaR over past 60 trading days
+average_var_60_days = returns.rolling(window=60).apply(calculate_var).iloc[-1].mean()
 
-    es_values = returns.apply(calculate_es)
-    st.write("Expected Shortfall (95% Confidence Level):", es_values)
+# Column 3: End of quarter stressed VaR
+end_of_quarter_stressed_var = calculate_stressed_var(returns.iloc[-1])
 
-    shocked_stock_data = stress_test(stock_data)
-    st.write("Stressed Data (20% Shock):", shocked_stock_data)
+# Column 4: Average stressed VaR over past 60 trading days
+average_stressed_var_60_days = returns.rolling(window=60).apply(calculate_stressed_var).iloc[-1].mean()
 
-    # backtest_results = returns.apply(backtest_var, args=(var_values,))
-    # st.write("Backtesting Results:", backtest_results)
+# Columns 5 & 6: Back-testing exceptions (last 250 trading days)
+backtest_exceptions_actual = backtest_var(returns.iloc[-250:], returns.apply(calculate_var))
+backtest_exceptions_hypothetical = backtest_var(returns.iloc[-250:], returns.apply(lambda x: calculate_var(x) * 1.1)) # Hypothetical adjustment
 
-    st.line_chart(stock_data, width=0, height=0)
-    st.line_chart(returns, width=0, height=0)
-    
-    #breaches = returns[returns < var_values]
-    #st.line_chart(breaches, width=0, height=0)
+# Columns 7 & 8: Scaling factors (manually set, or provided by APRA)
+scaling_factor_var = 3.0  # Example value
+scaling_factor_stressed_var = 3.0  # Example value
+
+# Columns 9 & 10: Scaled average VaR and stressed VaR
+scaled_avg_var = average_var_60_days * scaling_factor_var
+scaled_avg_stressed_var = average_stressed_var_60_days * scaling_factor_stressed_var
+
+# Headline information and measurements
+info = {
+    "Financial Quarter": [financial_quarter],
+    "Scale Factor:": ["Millions to two decimal places"]
+}
+
+# Prepare data for table
+report_data = {
+    "End of quarter VaR": [end_of_quarter_var],
+    "Average VaR over past 60 trading days": [average_var_60_days],
+    "End of quarter stressed VaR": [end_of_quarter_stressed_var],
+    "Average stressed VaR over past 60 trading days": [average_stressed_var_60_days],
+    "Back-testing exceptions (actual)": [backtest_exceptions_actual],
+    "Back-testing exceptions (hypothetical)": [backtest_exceptions_hypothetical],
+    "Scaling factor (VaR)": [scaling_factor_var],
+    "Scaling factor (stressed VaR)": [scaling_factor_stressed_var],
+    "Scaled average VaR": [scaled_avg_var],
+    "Scaled average stressed VaR": [scaled_avg_stressed_var],
+}
+
+#for i in range(6):
+#   if i not in report_data[
+#  "Back-testing exceptions (actual)","Back-testing exceptions (hypothetical)",
+# "Scaling factor (VaR)","Scaling factor (stressed VaR)"
+#]:
+#        report_data = abs(round(i))
+
+# Convert to DataFrame for display
+df_info = pd.DataFrame(info)
+df_report = pd.DataFrame(report_data)
+
+# Display the table in Streamlit
+st.table(df_info)
+st.table(df_report)
