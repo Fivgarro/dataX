@@ -1,9 +1,11 @@
+# pip install transformers==4.30.2 torch==2.3.0
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
 from scipy.stats import norm
 from datetime import datetime
+from transformers import GPT2LMHeadModel, GPT2Tokenizer
 
 # Function to determine the financial quarter based on the date
 def get_financial_quarter(date):
@@ -17,16 +19,22 @@ def get_financial_quarter(date):
     elif month in [4, 5, 6]:
         return "Q4: 1 April to 30 June"
 
+# Setup layout
+st.set_page_config(page_title="ARS 116 - Internal Model Approach", layout="wide", initial_sidebar_state="collapsed")
+col1, col2 = st.columns((2, 1), gap = "small")
+
 # User Inputs for Reporting
-st.title("ARS 116 - Internal Model Approach")
-st.write("")
+col1.title("ARS 116.0 - Internal Model Approach")
+
 st.sidebar.header("Reporting Inputs")
 
 # Date input for reporting period
 reporting_date = st.sidebar.date_input("Select Reporting Date", datetime.today())
 financial_quarter = get_financial_quarter(reporting_date)
 
+
 # reporting_consolidation = st.sidebar.selectbox("Reporting Consolidation", ["Level 1", "Level 2"])
+
 
 # Function to calculate daily VaR and stressed VaR
 def calculate_var(returns, confidence_level=0.99):
@@ -53,7 +61,7 @@ data = yf.download(selected_stocks, start="2022-07-01", end="2023-06-30")['Adj C
 returns = data.pct_change().dropna()
 
 # Column 1: End of quarter VaR
-end_of_quarter_var = abs(calculate_var(returns.iloc[-1])* 1e8)
+end_of_quarter_var = calculate_var(returns.iloc[-1])
 
 # Column 2: Average VaR over past 60 trading days
 average_var_60_days = returns.rolling(window=60).apply(calculate_var).iloc[-1].mean()
@@ -69,8 +77,8 @@ backtest_exceptions_actual = backtest_var(returns.iloc[-250:], returns.apply(cal
 backtest_exceptions_hypothetical = backtest_var(returns.iloc[-250:], returns.apply(lambda x: calculate_var(x) * 1.1)) # Hypothetical adjustment
 
 # Columns 7 & 8: Scaling factors (manually set, or provided by APRA)
-scaling_factor_var = 3.0  # Example value
-scaling_factor_stressed_var = 3.0  # Example value
+scaling_factor_var = 3  # Example value
+scaling_factor_stressed_var = 3  # Example value
 
 # Columns 9 & 10: Scaled average VaR and stressed VaR
 scaled_avg_var = average_var_60_days * scaling_factor_var
@@ -84,6 +92,7 @@ info = {
 
 # Prepare data for table
 report_data = {
+    "": "general market risk",
     "End of quarter VaR": [end_of_quarter_var],
     "Average VaR over past 60 trading days": [average_var_60_days],
     "End of quarter stressed VaR": [end_of_quarter_stressed_var],
@@ -96,17 +105,59 @@ report_data = {
     "Scaled average stressed VaR": [scaled_avg_stressed_var],
 }
 
-#for i in range(6):
-#   if i not in report_data[
-#  "Back-testing exceptions (actual)","Back-testing exceptions (hypothetical)",
-# "Scaling factor (VaR)","Scaling factor (stressed VaR)"
-#]:
-#        report_data = abs(round(i))
+formatted_data = ["End of quarter VaR","Average VaR over past 60 trading days",
+            "End of quarter stressed VaR","Average stressed VaR over past 60 trading days",
+            "Scaled average VaR","Scaled average stressed VaR"
+]
+
+# Update the values in report_data directly
+for k in formatted_data:
+    report_data[k] = [round(abs(report_data[k][0] * 1e8), 2)]
 
 # Convert to DataFrame for display
 df_info = pd.DataFrame(info)
 df_report = pd.DataFrame(report_data)
 
+# Convert report_data to a string for the model to read
+report_text = "\n".join([f"{key}: {value[0]}" for key, value in report_data.items()])
+
+
+# FinGPTWrapper class definition
+class FinGPTWrapper:
+    def __init__(self, model_name='gpt2'):
+        self.tokenizer = GPT2Tokenizer.from_pretrained(model_name)
+        self.model = GPT2LMHeadModel.from_pretrained(model_name)
+        self.tokenizer.pad_token = self.tokenizer.eos_token
+    
+    def generate_response(self, prompt):
+        template = "Instruction: Generate a financial risk report summary based on the input. Input: {} Answer:"
+        full_prompt = template.format(prompt)
+        inputs = self.tokenizer(full_prompt, return_tensors='pt', padding=True)
+        outputs = self.model.generate(
+            inputs.input_ids, 
+            attention_mask=inputs.attention_mask, 
+            max_new_tokens=50,  # Limit to 50 new tokens
+            temperature=0.3,    # Control randomness
+            top_p=0.9,          # Use nucleus sampling
+            num_return_sequences=1,
+            eos_token_id=self.tokenizer.eos_token_id
+        )
+        response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        # because of the continual repetition of the prompt template im extracting the part after 'Answer:'
+        response = response.split("Answer:")[1].strip()
+        return response
+
+# Initialize the FinGPTWrapper
+fin_gpt = FinGPTWrapper()
+
+# Generate the summary
+summary = fin_gpt.generate_response(report_text)
+
+
 # Display the table in Streamlit
-st.table(df_info)
-st.table(df_report)
+col1.dataframe(df_info, hide_index = True)
+col1.write("")
+col1.write("")
+col1.dataframe(df_report, hide_index = True)
+col2.header("Summary")
+col2.write(summary)
